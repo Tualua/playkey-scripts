@@ -1,3 +1,14 @@
+[CmdletBinding(DefaultParametersetName='None')]
+param(
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Offsets,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$HostIP,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$HostName,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ExtIP,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ExtIface,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][int]$VMBase,
+    [Parameter(ParameterSetName='UseVMNumber', Mandatory=$false)][switch]$UseVMNumber,
+    [Parameter(ParameterSetName='UseVMNumber', Mandatory=$true)][int]$FirstVMNumber
+)
 function Get-FirewallRuleString {
     param (
         [Parameter(Mandatory)]
@@ -38,30 +49,31 @@ $UDPPorts = 14010,14011,14012,14013
 
 [string[]]$MikrotikScript = @()
 
-$_Offsets = Read-Host -Prompt "Enter offsets (comma separated)"
-$_HostIP = Read-Host -Prompt "Enter host IP address"
-$HostName = Read-Host -Prompt "Enter hostname"
-$VMStartNumber = Read-Host -Prompt "Enter VM Start Number"
-$ExternalAddress = Read-Host -Prompt 'Enter external IP address'
-$ExternalIface = Read-Host -Prompt 'Enter external interface name'
-$Offsets = $_Offsets.Split(',')
-$HostIP = [ipaddress]$_HostIP.Trim()
+$_Offsets = $Offsets.Split(',')
+$_HostIP = [ipaddress]$HostIP.Trim()
 
-for ($i=1; $i -le $Offsets.Count; $i++) {
-    $Octets = $HostIP.ToString().Split('.')[0..2]
-    $Octets += ([int]($HostIP.ToString().Split('.')[-1])+$i).ToString()
-    $VMIP = $Octets -join '.'
-    $MikrotikScript += Get-FirewallRuleString -Comment $("`"SSH {0}`"" -f $HostName) -ExtIf $ExternalIface -ExtIP $ExternalAddress -ExtPort ($SSHPort + [int]$Offsets[$i-1]*100) `
-    -Protocol 'tcp' -IntPort $SSHPort -IntIP $HostIP
+for ($i=1; $i -le $_Offsets.Count; $i++) {
+    $Octets = $_HostIP.ToString().Split('.')[0..2]
+    if ($UseVMNumber) {
+        $Octets += [string]([int]$VMBase + $FirstVMNumber + $i - 1)
+        $VMIP = $Octets -join '.'
+        $VMNum = $FirstVMNumber + $i - 1
+    } else {
+        $Octets += [string]([int]$VMBase + [int]$_Offsets[$i-1])
+        $VMIP = $Octets -join '.'
+        $VMNum = [int]$_Offsets[$i-1]
+    }
+    $MikrotikScript += Get-FirewallRuleString -Comment $("`"SSH {0}`"" -f $HostName) -ExtIf $ExtIface -ExtIP $ExtIP -ExtPort ($SSHPort + [int]$_Offsets[$i-1]*100) `
+    -Protocol 'tcp' -IntPort $SSHPort -IntIP $_HostIP
     foreach ($TCPPort in $TCPPorts) {
-        $MikrotikScript += Get-FirewallRuleString -Comment $("`"vm{0}`"" -f $([int]$VMStartNumber+$i-1)) -ExtIf $ExternalIface -ExtIP $ExternalAddress -ExtPort ($TCPPort + [int]$Offsets[$i-1]*100) `
-        -Protocol 'tcp' -IntPort ($TCPPort + [int]$Offsets[$i-1]*10) -IntIP $HostIP
+        $MikrotikScript += Get-FirewallRuleString -Comment $("`"vm{0}`"" -f $VMNum) -ExtIf $ExtIface -ExtIP $ExtIP -ExtPort ($TCPPort + [int]$_Offsets[$i-1]*100) `
+        -Protocol 'tcp' -IntPort ($TCPPort + [int]$_Offsets[$i-1]*10) -IntIP $_HostIP
     }
     foreach ($UDPPort in $UDPPorts) {
-        $MikrotikScript += Get-FirewallRuleString -Comment $("`"vm{0}`"" -f $([int]$VMStartNumber+$i-1)) -ExtIf $ExternalIface -ExtIP $ExternalAddress -ExtPort ($UDPPort + [int]$Offsets[$i-1]*100) `
+        $MikrotikScript += Get-FirewallRuleString -Comment $("`"vm{0}`"" -f $VMNum) -ExtIf $ExtIface -ExtIP $ExtIP -ExtPort ($UDPPort + [int]$_Offsets[$i-1]*100) `
         -Protocol 'udp' -IntPort $UDPPort $VMIP
     }
 }
 
 
-$MikrotikScript | Out-File "$Hostname-$ExternalAddress-$HostIP.rsc"
+$MikrotikScript | Out-File "$Hostname-$ExtIP-$_HostIP.rsc"
